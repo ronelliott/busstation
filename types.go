@@ -2,7 +2,11 @@ package busstation
 
 import "sync"
 
-// channelFanout is a fanout that sends values to a set of channels.
+// channelFanout is a fanout strategy that sends values to a set of channels.
+// It is used by the bus to send values to all handlers for a given event.
+// This interface is used to decouple the bus from the fanout implementation and
+// allows for different fanout strategies to be used.
+// This is internal to the package and should not be used outside of it.
 type channelFanout[T any] interface {
 	// Add adds the given channels to the fanout.
 	Add(...chan<- T)
@@ -46,7 +50,7 @@ type Bus[T any] interface {
 }
 
 // Passenger is a handler for a bus event. It is called for each value sent to the
-// bus for the given event the passenger is registered for.
+// bus for the given event the passenger is registered to receive.
 type Passenger[T any] func(T)
 
 // Ticket is a handle to a passenger registered with a bus. It can be used to
