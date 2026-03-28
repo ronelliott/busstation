@@ -47,16 +47,17 @@ func (bus *busImpl[T]) Depart(ticket *Ticket[T]) bool {
 		return false
 	}
 
+	event := ticket.event
 	fanout.Close(ticket.channel)
+	ticket.invalidate()
 	bus.mutex.Unlock()
 
 	ticket.wait.Wait()
 
 	bus.mutex.Lock()
 	if fanout.Len() == 0 {
-		delete(bus.fanouts, ticket.event)
+		delete(bus.fanouts, event)
 	}
-	ticket.invalidate()
 	bus.mutex.Unlock()
 
 	return true

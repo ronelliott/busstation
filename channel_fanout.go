@@ -2,10 +2,25 @@ package busstation
 
 import "sync"
 
+// fanoutEntry holds a subscriber channel alongside the coordination state
+// needed to safely close it while sends may be in flight.
+//
+// Lifecycle of a close:
+//  1. Close removes the entry from the fanout slice (under slice write lock).
+//  2. Close signals done, waking any send goroutine blocked in the select.
+//  3. Close calls inflight.Wait() — guaranteed to observe all Add calls made
+//     before the slice write lock was acquired (see send).
+//  4. Close calls close(ch) — safe because no goroutine is sending to ch.
+type fanoutEntry[T any] struct {
+	ch       chan<- T
+	done     chan struct{}
+	inflight sync.WaitGroup
+}
+
 // channelFanoutImpl is the default channelFanout implementation.
 type channelFanoutImpl[T any] struct {
-	mu       sync.RWMutex
-	channels []chan<- T
+	mu      sync.RWMutex
+	entries []*fanoutEntry[T]
 }
 
 // newChannelFanout creates a new channel fanout.
@@ -17,19 +32,33 @@ func newChannelFanout[T any]() channelFanout[T] {
 func (fanout *channelFanoutImpl[T]) Add(channels ...chan<- T) {
 	fanout.mu.Lock()
 	defer fanout.mu.Unlock()
-	fanout.channels = append(fanout.channels, channels...)
+	for _, ch := range channels {
+		fanout.entries = append(fanout.entries, &fanoutEntry[T]{
+			ch:   ch,
+			done: make(chan struct{}),
+		})
+	}
 }
 
-// Close removes channels that exist in the fanout and closes them. Channels not
-// found in the fanout are ignored, preventing accidental closure of channels
-// owned by other fanouts.
+// Close removes channels found in the fanout, signals their done channel so
+// any in-flight send goroutines can exit without blocking on the channel, waits
+// for all in-flight sends to finish, then closes the channel. Channels not
+// found in the fanout are ignored.
 func (fanout *channelFanoutImpl[T]) Close(channels ...chan<- T) {
+	var toClose []*fanoutEntry[T]
+
 	fanout.mu.Lock()
-	defer fanout.mu.Unlock()
-	for _, channel := range channels {
-		if fanout.remove(channel) {
-			close(channel)
+	for _, ch := range channels {
+		if e := fanout.findAndRemove(ch); e != nil {
+			toClose = append(toClose, e)
 		}
+	}
+	fanout.mu.Unlock()
+
+	for _, e := range toClose {
+		close(e.done)      // unblock any select goroutine waiting on this entry
+		e.inflight.Wait() // wait for all in-flight sends to exit
+		close(e.ch)       // safe: no goroutine is sending to ch
 	}
 }
 
@@ -44,42 +73,58 @@ func (fanout *channelFanoutImpl[T]) Create() chan T {
 func (fanout *channelFanoutImpl[T]) Len() int {
 	fanout.mu.RLock()
 	defer fanout.mu.RUnlock()
-	return len(fanout.channels)
+	return len(fanout.entries)
 }
 
-// remove removes a single channel from the fanout slice. Caller must hold mu.
-func (fanout *channelFanoutImpl[T]) remove(channel chan<- T) bool {
-	for idx, other := range fanout.channels {
-		if other == channel {
-			fanout.channels = append(fanout.channels[:idx], fanout.channels[idx+1:]...)
-			return true
+// findAndRemove finds and removes the entry for the given channel from the
+// entries slice. Returns nil if not found. Caller must hold mu.
+func (fanout *channelFanoutImpl[T]) findAndRemove(ch chan<- T) *fanoutEntry[T] {
+	for i, e := range fanout.entries {
+		if e.ch == ch {
+			fanout.entries = append(fanout.entries[:i], fanout.entries[i+1:]...)
+			return e
 		}
 	}
-	return false
+	return nil
 }
 
-// Remove removes the given channels from the fanout.
+// Remove removes the given channels from the fanout without closing them.
 func (fanout *channelFanoutImpl[T]) Remove(channels ...chan<- T) {
 	fanout.mu.Lock()
 	defer fanout.mu.Unlock()
-	for _, channel := range channels {
-		fanout.remove(channel)
+	for _, ch := range channels {
+		fanout.findAndRemove(ch)
 	}
 }
 
-// send sends the given value to all channels in the fanout. An RLock is held
-// for the entire duration — including waiting for all sends to complete — so
-// that Close cannot close a channel while a send to it is in flight.
+// send sends the given value to all current subscribers. The entries slice is
+// snapshotted and each entry's inflight counter is incremented while holding
+// the slice RLock. This guarantees that Close's inflight.Wait() — which can
+// only start after the write lock is acquired (i.e., after all RLocks are
+// released) — will observe every Add call made here.
+//
+// Each send goroutine uses a select so that a departing subscriber (done
+// closed) causes the message to be dropped rather than blocking indefinitely.
 func (fanout *channelFanoutImpl[T]) send(value T) {
 	fanout.mu.RLock()
-	defer fanout.mu.RUnlock()
+	entries := make([]*fanoutEntry[T], len(fanout.entries))
+	copy(entries, fanout.entries)
+	for _, e := range entries {
+		e.inflight.Add(1)
+	}
+	fanout.mu.RUnlock()
+
 	wait := sync.WaitGroup{}
-	for _, channel := range fanout.channels {
+	for _, entry := range entries {
 		wait.Add(1)
-		go func(channel chan<- T) {
+		go func(e *fanoutEntry[T]) {
 			defer wait.Done()
-			channel <- value
-		}(channel)
+			defer e.inflight.Done()
+			select {
+			case e.ch <- value:
+			case <-e.done:
+			}
+		}(entry)
 	}
 	wait.Wait()
 }

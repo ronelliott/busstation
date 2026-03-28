@@ -76,22 +76,29 @@ func TestBus_Depart_Empty(t *testing.T) {
 
 // TestBus_Announce_Reentrant verifies that a handler can call bus.Announce
 // without deadlocking (previously held bus.mutex across delivery).
+// The re-entrant announce targets a different event so the handler goroutine
+// does not block waiting on its own channel receive.
 func TestBus_Announce_Reentrant(t *testing.T) {
 	bus := busstation.NewBus[int]()
 
-	innerCalled := false
-	var ticket *busstation.Ticket[int]
+	innerCalled := make(chan struct{})
 
-	ticket = bus.Embus("outer", func(data int) {
+	outerTicket := bus.Embus("outer", func(data int) {
 		if data == 1 {
-			innerCalled = true
-			bus.Announce("outer", 2)
+			bus.Announce("inner", 2)
+		}
+	})
+
+	innerTicket := bus.Embus("inner", func(data int) {
+		if data == 2 {
+			close(innerCalled)
 		}
 	})
 
 	assert.True(t, bus.Announce("outer", 1))
-	ticket.Depart()
-	assert.True(t, innerCalled)
+	<-innerCalled
+	outerTicket.Depart()
+	innerTicket.Depart()
 }
 
 // TestBus_ConcurrentAnnounceDepart verifies that concurrent Announce and Depart
