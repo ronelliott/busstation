@@ -16,7 +16,7 @@ func newTestBus[T any](t *testing.T, opts ...busredis.Option[T]) (busstation.Bus
 	t.Helper()
 	mr := miniredis.RunT(t)
 	bus := busredis.NewBus[T](mr.Addr(), opts...)
-	return bus, func() { bus.Close() }
+	return bus, func() { require.NoError(t, bus.Close()) }
 }
 
 func TestAnnounceAndReceive(t *testing.T) {
