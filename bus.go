@@ -17,12 +17,14 @@ func NewBus[T any]() Bus[T] {
 
 // Announce sends the given value to all handlers for the given event. The value
 // is sent to the subscribers in a separate goroutine via a fanout channel. It
-// returns true if there are subscribers for the given event, false otherwise.
+// returns true if there were subscribers registered at the moment the check was
+// made, false otherwise. Under concurrent use a subscriber may depart after
+// this check but before delivery completes, so a true return is best-effort.
 func (bus *busImpl[T]) Announce(event string, data T) bool {
 	bus.mutex.Lock()
-	defer bus.mutex.Unlock()
-
 	fanout, ok := bus.fanouts[event]
+	bus.mutex.Unlock()
+
 	if !ok {
 		return false
 	}
@@ -31,29 +33,43 @@ func (bus *busImpl[T]) Announce(event string, data T) bool {
 	return true
 }
 
-// Depart removes the ticket from the bus, preventing further calls to the handler.
-// It returns true if the ticket was removed, false otherwise.
+// Depart removes the ticket from the bus, preventing further messages from
+// being delivered to the handler. It returns true if the ticket was removed,
+// false otherwise. Depart returns as soon as the subscription is torn down;
+// call ticket.Wait() if you also need to block until the handler goroutine
+// has fully exited. This split allows handlers to depart their own ticket
+// without deadlocking.
 func (bus *busImpl[T]) Depart(ticket *Ticket[T]) bool {
-	bus.mutex.Lock()
-	defer bus.mutex.Unlock()
+	if ticket == nil || !ticket.departed.CompareAndSwap(false, true) {
+		return false
+	}
 
-	if ticket == nil || !ticket.IsValid() {
+	bus.mutex.Lock()
+	if ticket.bus != bus {
+		bus.mutex.Unlock()
+		ticket.departed.Store(false) // undo — ticket belongs to another bus
 		return false
 	}
 
 	fanout, ok := bus.fanouts[ticket.event]
 	if !ok {
+		bus.mutex.Unlock()
 		return false
 	}
 
+	event := ticket.event
+	bus.mutex.Unlock()
+
+	// Close runs outside the lock — it may block briefly waiting for any
+	// in-flight send goroutines to finish.
 	fanout.Close(ticket.channel)
-	ticket.wait.Wait()
 
+	bus.mutex.Lock()
 	if fanout.Len() == 0 {
-		delete(bus.fanouts, ticket.event)
+		delete(bus.fanouts, event)
 	}
+	bus.mutex.Unlock()
 
-	ticket.invalidate()
 	return true
 }
 

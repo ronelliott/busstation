@@ -1,7 +1,9 @@
 package busstation_test
 
 import (
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -41,8 +43,10 @@ func TestBus_Basic(t *testing.T) {
 	assert.True(t, bus.Announce("test1", testValue1), "Announce should return true when there are subscribers")
 	assert.True(t, bus.Announce("test1", testValue1), "Announce should return true when there are subscribers")
 	assert.True(t, bus.Depart(ticket2), "Depart should return true when the ticket is valid")
+	ticket2.Wait()
 	assert.True(t, bus.Announce("test1", testValue1), "Announce should return true when there are subscribers")
 	assert.True(t, bus.Depart(ticket1), "Depart should return true when the ticket is valid")
+	ticket1.Wait()
 	assert.False(t, bus.Announce("test1", testValue1), "Announce should return false when there are no subscribers")
 
 	assert.True(t, bus.Announce("test2", testValue2), "Announce should return true when there are subscribers")
@@ -50,6 +54,7 @@ func TestBus_Basic(t *testing.T) {
 	assert.True(t, bus.Announce("test2", testValue2), "Announce should return true when there are subscribers")
 	assert.True(t, bus.Announce("test2", testValue2), "Announce should return true when there are subscribers")
 	assert.True(t, bus.Depart(ticket3), "Depart should return true when the ticket is valid")
+	ticket3.Wait()
 	assert.False(t, bus.Announce("test2", testValue2), "Announce should return false when there are no subscribers")
 
 	assert.Equal(t, 3, handler1CallCount, "handler1 should be called 3 times")
@@ -71,6 +76,82 @@ func TestBus_Announce_Empty(t *testing.T) {
 func TestBus_Depart_Empty(t *testing.T) {
 	bus := busstation.NewBus[string]()
 	assert.False(t, bus.Depart(&busstation.Ticket[string]{}), "Depart should return false when the ticket is invalid")
+}
+
+// TestBus_Announce_Reentrant verifies that a handler can call bus.Announce
+// without deadlocking (previously held bus.mutex across delivery).
+// The re-entrant announce targets a different event so the handler goroutine
+// does not block waiting on its own channel receive.
+func TestBus_Announce_Reentrant(t *testing.T) {
+	bus := busstation.NewBus[int]()
+
+	innerCalled := make(chan struct{})
+
+	outerTicket := bus.Embus("outer", func(data int) {
+		if data == 1 {
+			bus.Announce("inner", 2)
+		}
+	})
+
+	innerTicket := bus.Embus("inner", func(data int) {
+		if data == 2 {
+			close(innerCalled)
+		}
+	})
+
+	assert.True(t, bus.Announce("outer", 1))
+	select {
+	case <-innerCalled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for re-entrant Announce to deliver")
+	}
+	outerTicket.Depart()
+	innerTicket.Depart()
+	outerTicket.Wait()
+	innerTicket.Wait()
+}
+
+// TestBus_ConcurrentAnnounceDepart verifies that concurrent Announce and Depart
+// calls do not panic or race (exercises the fanout RWMutex).
+func TestBus_ConcurrentAnnounceDepart(t *testing.T) {
+	bus := busstation.NewBus[int]()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ticket := bus.Embus("event", func(int) {})
+			bus.Announce("event", 1)
+			ticket.Depart()
+			ticket.Wait()
+		}()
+	}
+	wg.Wait()
+}
+
+// TestBus_SelfDepart verifies that a handler can call Depart on its own ticket
+// without deadlocking. The ticket is passed through a channel to avoid a data
+// race between the main goroutine's assignment and the handler goroutine's read.
+func TestBus_SelfDepart(t *testing.T) {
+	bus := busstation.NewBus[int]()
+
+	departed := make(chan struct{})
+	ticketC := make(chan *busstation.Ticket[int], 1)
+
+	ticket := bus.Embus("event", func(int) {
+		(<-ticketC).Depart()
+		close(departed)
+	})
+	ticketC <- ticket
+
+	bus.Announce("event", 1)
+	select {
+	case <-departed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for self-depart")
+	}
+	ticket.Wait()
 }
 
 func TestBus_Depart_Invalid(t *testing.T) {

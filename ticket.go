@@ -12,25 +12,29 @@ func newTicket[T any](bus Bus[T], channel chan T, event string) *Ticket[T] {
 }
 
 // Depart removes the ticket from the bus it was created from, preventing further
-// calls to the handler. It returns true if the ticket was removed successfully,
-// or false otherwise.
+// messages from being delivered to the handler. It returns true if the ticket
+// was removed successfully, or false otherwise. Call Wait after Depart if you
+// need a synchronous guarantee that the handler goroutine has fully exited.
 func (ticket *Ticket[T]) Depart() bool {
+	if ticket == nil || ticket.departed.Load() {
+		return false
+	}
 	return ticket.bus.Depart(ticket)
 }
 
-// IsValid returns true if the ticket is valid, false otherwise. Tickets are considered
-// valid if they are not nil and the bus, channel, and event they are subscribed to
-// are not nil or empty.
-func (ticket *Ticket[T]) IsValid() bool {
-	return ticket.bus != nil && ticket.channel != nil && ticket.event != ""
+// Wait blocks until the handler goroutine for this ticket has fully exited.
+// It is safe to call from any goroutine, including concurrently with Depart,
+// but must not be called from within the handler itself.
+func (ticket *Ticket[T]) Wait() {
+	if ticket == nil {
+		return
+	}
+	ticket.wait.Wait()
 }
 
-// invalidate invalidates the ticket by setting its bus and channel to nil and it's
-// subscribed event to an empty string. This is used internally to mark the ticket
-// as invalid after it has been removed from the bus.
-// This is not intended to be used by the user.
-func (ticket *Ticket[T]) invalidate() {
-	ticket.bus = nil
-	ticket.channel = nil
-	ticket.event = ""
+// IsValid returns true if the ticket is valid, false otherwise. Tickets are
+// considered valid if they have not yet departed and were created by a bus
+// (i.e. bus, channel, and event are non-zero).
+func (ticket *Ticket[T]) IsValid() bool {
+	return !ticket.departed.Load() && ticket.bus != nil && ticket.channel != nil && ticket.event != ""
 }
