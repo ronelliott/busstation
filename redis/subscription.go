@@ -33,6 +33,11 @@ func newSubscription[T any](pubsub *goredis.PubSub, codec Codec[T], onErr func(e
 
 func (s *subscription[T]) run() {
 	defer s.wg.Done()
+	// Always close localCh when run exits so that ranging goroutines (e.g.
+	// RunHandler) unblock even on a connection drop where close() is never
+	// called. close() uses sync.Once and no longer closes localCh itself, so
+	// there is no double-close risk.
+	defer close(s.localCh)
 	msgCh := s.pubsub.Channel()
 	for {
 		select {
@@ -60,11 +65,12 @@ func (s *subscription[T]) run() {
 
 // close stops the bridge goroutine and unsubscribes from Redis.
 // It is safe to call more than once; subsequent calls are no-ops.
+// localCh is closed by run() when it exits, not here, so there is no
+// double-close risk regardless of whether the connection dropped first.
 func (s *subscription[T]) close() {
 	s.once.Do(func() {
 		close(s.done)
 		s.pubsub.Close()
 		s.wg.Wait()
-		close(s.localCh)
 	})
 }

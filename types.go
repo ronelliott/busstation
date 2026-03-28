@@ -55,7 +55,10 @@ type Bus[T any] interface {
 	// Embus adds the given handler to the bus for the given event. The handler will
 	// be called for each value sent to the bus for the given event. The handler
 	// will be called in a separate goroutine via a fanout channel. The ticket
-	// returned can be used to remove the handler from the bus.
+	// returned can be used to remove the handler from the bus. Implementations
+	// backed by an external broker (e.g. Redis) may return nil if the subscription
+	// cannot be established (e.g. the broker is unreachable or the bus is closed);
+	// callers should check for a nil ticket before using it.
 	Embus(string, Passenger[T]) *Ticket[T]
 }
 
