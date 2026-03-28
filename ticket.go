@@ -32,6 +32,9 @@ func (ticket *Ticket[T]) MarkDeparted() bool {
 // that Wait() returns only after it exits. This is intended for use by custom
 // Bus implementations in external packages.
 func (ticket *Ticket[T]) RunHandler(handler Passenger[T]) {
+	if ticket == nil {
+		return
+	}
 	ticket.wait.Add(1)
 	go func() {
 		defer ticket.wait.Done()

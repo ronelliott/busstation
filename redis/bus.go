@@ -71,21 +71,20 @@ func (b *redisBusImpl[T]) Close() error {
 	b.cancel()
 
 	b.mu.Lock()
-	subs := make([]*subscription[T], 0, len(b.subscriptions))
-	for _, s := range b.subscriptions {
-		subs = append(subs, s)
-	}
+	old := b.subscriptions
+	b.subscriptions = map[*busstation.Ticket[T]]*subscription[T]{}
 	b.mu.Unlock()
 
-	for _, s := range subs {
-		s.close(b.ctx)
+	for ticket, s := range old {
+		ticket.MarkDeparted()
+		s.close()
 	}
 
 	return b.client.Close()
 }
 
 func (b *redisBusImpl[T]) Depart(ticket *busstation.Ticket[T]) bool {
-	if ticket == nil || !ticket.MarkDeparted() {
+	if ticket == nil {
 		return false
 	}
 
@@ -100,7 +99,11 @@ func (b *redisBusImpl[T]) Depart(ticket *busstation.Ticket[T]) bool {
 		return false
 	}
 
-	sub.close(b.ctx)
+	if !ticket.MarkDeparted() {
+		return false
+	}
+
+	sub.close()
 	return true
 }
 

@@ -1,7 +1,6 @@
 package redis
 
 import (
-	"context"
 	"sync"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -15,6 +14,7 @@ type subscription[T any] struct {
 	codec   Codec[T]
 	onErr   func(error)
 	done    chan struct{}
+	once    sync.Once
 	wg      sync.WaitGroup
 }
 
@@ -59,9 +59,12 @@ func (s *subscription[T]) run() {
 }
 
 // close stops the bridge goroutine and unsubscribes from Redis.
-func (s *subscription[T]) close(ctx context.Context) {
-	close(s.done)
-	s.pubsub.Close()
-	s.wg.Wait()
-	close(s.localCh)
+// It is safe to call more than once; subsequent calls are no-ops.
+func (s *subscription[T]) close() {
+	s.once.Do(func() {
+		close(s.done)
+		s.pubsub.Close()
+		s.wg.Wait()
+		close(s.localCh)
+	})
 }
