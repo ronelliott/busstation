@@ -105,7 +105,11 @@ func TestDepartStopsDelivery(t *testing.T) {
 	})
 
 	bus.Announce("msg", "one")
-	<-first
+	select {
+	case <-first:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first message")
+	}
 
 	ticket.Depart()
 	ticket.Wait()

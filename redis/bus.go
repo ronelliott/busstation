@@ -103,16 +103,32 @@ func (b *redisBusImpl[T]) Depart(ticket *busstation.Ticket[T]) bool {
 		return false
 	}
 
-	if !ticket.MarkDeparted() {
-		return false
-	}
-
+	// Always close the subscription — it was removed from the map and must
+	// not be orphaned regardless of whether this call wins the departed CAS.
+	// sub.close is idempotent so a concurrent Close call is safe.
+	departed := ticket.MarkDeparted()
 	sub.close()
-	return true
+	return departed
 }
 
+// Embus subscribes to the given event and calls handler for each message.
+// It blocks briefly to confirm the Redis subscription before returning.
+// Returns nil if the subscription cannot be established (e.g. Redis is
+// unreachable or the bus has been closed); the error is forwarded to the
+// WithErrorHandler callback if one is set.
 func (b *redisBusImpl[T]) Embus(event string, handler busstation.Passenger[T]) *busstation.Ticket[T] {
 	pubsub := b.client.Subscribe(b.ctx, event)
+
+	// Block until Redis acknowledges the subscription so that an Announce
+	// immediately after Embus is guaranteed to be received.
+	if _, err := pubsub.Receive(b.ctx); err != nil {
+		if b.onErr != nil {
+			b.onErr(err)
+		}
+		pubsub.Close()
+		return nil
+	}
+
 	sub := newSubscription[T](pubsub, b.codec, b.onErr)
 	ticket := busstation.NewTicket[T](b, sub.localCh, event)
 	ticket.RunHandler(handler)

@@ -5,7 +5,7 @@ go 1.24
 require (
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/redis/go-redis/v9 v9.7.3
-	github.com/ronelliott/busstation v0.0.0
+	github.com/ronelliott/busstation v0.0.0-dev
 	github.com/stretchr/testify v1.8.4
 )
 
