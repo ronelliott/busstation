@@ -16,6 +16,9 @@ func newTicket[T any](bus Bus[T], channel chan T, event string) *Ticket[T] {
 // was removed successfully, or false otherwise. Call Wait after Depart if you
 // need a synchronous guarantee that the handler goroutine has fully exited.
 func (ticket *Ticket[T]) Depart() bool {
+	if ticket == nil || !ticket.IsValid() {
+		return false
+	}
 	return ticket.bus.Depart(ticket)
 }
 
@@ -23,6 +26,9 @@ func (ticket *Ticket[T]) Depart() bool {
 // It is safe to call from any goroutine, including concurrently with Depart,
 // but must not be called from within the handler itself.
 func (ticket *Ticket[T]) Wait() {
+	if ticket == nil {
+		return
+	}
 	ticket.wait.Wait()
 }
 

@@ -107,6 +107,8 @@ func TestBus_Announce_Reentrant(t *testing.T) {
 	}
 	outerTicket.Depart()
 	innerTicket.Depart()
+	outerTicket.Wait()
+	innerTicket.Wait()
 }
 
 // TestBus_ConcurrentAnnounceDepart verifies that concurrent Announce and Depart
@@ -122,6 +124,7 @@ func TestBus_ConcurrentAnnounceDepart(t *testing.T) {
 			ticket := bus.Embus("event", func(int) {})
 			bus.Announce("event", 1)
 			ticket.Depart()
+			ticket.Wait()
 		}()
 	}
 	wg.Wait()
