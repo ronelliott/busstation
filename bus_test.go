@@ -1,6 +1,7 @@
 package busstation_test
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -71,6 +72,44 @@ func TestBus_Announce_Empty(t *testing.T) {
 func TestBus_Depart_Empty(t *testing.T) {
 	bus := busstation.NewBus[string]()
 	assert.False(t, bus.Depart(&busstation.Ticket[string]{}), "Depart should return false when the ticket is invalid")
+}
+
+// TestBus_Announce_Reentrant verifies that a handler can call bus.Announce
+// without deadlocking (previously held bus.mutex across delivery).
+func TestBus_Announce_Reentrant(t *testing.T) {
+	bus := busstation.NewBus[int]()
+
+	innerCalled := false
+	var ticket *busstation.Ticket[int]
+
+	ticket = bus.Embus("outer", func(data int) {
+		if data == 1 {
+			innerCalled = true
+			bus.Announce("outer", 2)
+		}
+	})
+
+	assert.True(t, bus.Announce("outer", 1))
+	ticket.Depart()
+	assert.True(t, innerCalled)
+}
+
+// TestBus_ConcurrentAnnounceDepart verifies that concurrent Announce and Depart
+// calls do not panic or race (exercises the fanout RWMutex).
+func TestBus_ConcurrentAnnounceDepart(t *testing.T) {
+	bus := busstation.NewBus[int]()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ticket := bus.Embus("event", func(int) {})
+			bus.Announce("event", 1)
+			ticket.Depart()
+		}()
+	}
+	wg.Wait()
 }
 
 func TestBus_Depart_Invalid(t *testing.T) {

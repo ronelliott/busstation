@@ -3,30 +3,37 @@ package busstation
 import "sync"
 
 // channelFanoutImpl is the default channelFanout implementation.
-type channelFanoutImpl[T any] []chan<- T
+type channelFanoutImpl[T any] struct {
+	mu       sync.RWMutex
+	channels []chan<- T
+}
 
 // newChannelFanout creates a new channel fanout.
 func newChannelFanout[T any]() channelFanout[T] {
 	return &channelFanoutImpl[T]{}
 }
 
-// Add adds the given channels to the fanout. The channels are added to the
-// fanout in the order they are given.
+// Add adds the given channels to the fanout.
 func (fanout *channelFanoutImpl[T]) Add(channels ...chan<- T) {
-	*fanout = append(*fanout, channels...)
+	fanout.mu.Lock()
+	defer fanout.mu.Unlock()
+	fanout.channels = append(fanout.channels, channels...)
 }
 
-// Close is a convenience method that removes the given channels from the fanout
-// and then closes it.
+// Close removes channels that exist in the fanout and closes them. Channels not
+// found in the fanout are ignored, preventing accidental closure of channels
+// owned by other fanouts.
 func (fanout *channelFanoutImpl[T]) Close(channels ...chan<- T) {
+	fanout.mu.Lock()
+	defer fanout.mu.Unlock()
 	for _, channel := range channels {
-		fanout.Remove(channel)
-		close(channel)
+		if fanout.remove(channel) {
+			close(channel)
+		}
 	}
 }
 
-// Create creates a new channel and adds it to the fanout. The new channel is
-// returned.
+// Create creates a new channel, adds it to the fanout, and returns it.
 func (fanout *channelFanoutImpl[T]) Create() chan T {
 	channel := make(chan T)
 	fanout.Add(channel)
@@ -35,36 +42,39 @@ func (fanout *channelFanoutImpl[T]) Create() chan T {
 
 // Len returns the number of channels in the fanout.
 func (fanout *channelFanoutImpl[T]) Len() int {
-	return len(*fanout)
+	fanout.mu.RLock()
+	defer fanout.mu.RUnlock()
+	return len(fanout.channels)
 }
 
-// remove removes the given channel from the fanout if it exists. After finding
-// the channel it is removed by copying the elements after it one position to
-// the left.
+// remove removes a single channel from the fanout slice. Caller must hold mu.
 func (fanout *channelFanoutImpl[T]) remove(channel chan<- T) bool {
-	for idx, other := range *fanout {
+	for idx, other := range fanout.channels {
 		if other == channel {
-			*fanout = append((*fanout)[:idx], (*fanout)[idx+1:]...)
+			fanout.channels = append(fanout.channels[:idx], fanout.channels[idx+1:]...)
 			return true
 		}
 	}
-
 	return false
 }
 
-// Remove removes the given channels from the fanout if it exists. After finding
-// a channel it is removed by copying the elements after it one position to the left.
+// Remove removes the given channels from the fanout.
 func (fanout *channelFanoutImpl[T]) Remove(channels ...chan<- T) {
+	fanout.mu.Lock()
+	defer fanout.mu.Unlock()
 	for _, channel := range channels {
 		fanout.remove(channel)
 	}
 }
 
-// send sends the given value to all channels in the fanout. The value is
-// sent to the channels in separate goroutines.
+// send sends the given value to all channels in the fanout. An RLock is held
+// for the entire duration — including waiting for all sends to complete — so
+// that Close cannot close a channel while a send to it is in flight.
 func (fanout *channelFanoutImpl[T]) send(value T) {
+	fanout.mu.RLock()
+	defer fanout.mu.RUnlock()
 	wait := sync.WaitGroup{}
-	for _, channel := range *fanout {
+	for _, channel := range fanout.channels {
 		wait.Add(1)
 		go func(channel chan<- T) {
 			defer wait.Done()
@@ -74,8 +84,7 @@ func (fanout *channelFanoutImpl[T]) send(value T) {
 	wait.Wait()
 }
 
-// Send sends the each of the given values to all channels in the fanout in
-// sequence. The values are sent to the channels in separate goroutines.
+// Send sends each of the given values to all channels in the fanout in sequence.
 func (fanout *channelFanoutImpl[T]) Send(values ...T) {
 	for _, value := range values {
 		fanout.send(value)

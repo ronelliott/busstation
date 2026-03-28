@@ -36,7 +36,7 @@ func (bus *busImpl[T]) Announce(event string, data T) bool {
 func (bus *busImpl[T]) Depart(ticket *Ticket[T]) bool {
 	bus.mutex.Lock()
 
-	if ticket == nil || !ticket.IsValid() {
+	if ticket == nil || !ticket.IsValid() || ticket.bus != bus {
 		bus.mutex.Unlock()
 		return false
 	}
