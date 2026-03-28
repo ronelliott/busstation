@@ -18,4 +18,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
+// replace is for local development only. Remove this directive and update
+// github.com/ronelliott/busstation to a real tagged version before publishing.
 replace github.com/ronelliott/busstation => ../

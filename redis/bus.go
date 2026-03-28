@@ -11,9 +11,13 @@ import (
 // Option is a functional option for configuring a Redis-backed bus.
 type Option[T any] func(*redisBusImpl[T])
 
-// WithCodec overrides the default JSON codec.
+// WithCodec overrides the default JSON codec. A nil value is ignored and the
+// default JSONCodec is kept to avoid a later panic in Marshal/Unmarshal.
 func WithCodec[T any](c Codec[T]) Option[T] {
 	return func(b *redisBusImpl[T]) {
+		if c == nil {
+			return
+		}
 		b.codec = c
 	}
 }

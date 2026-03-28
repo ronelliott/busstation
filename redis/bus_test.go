@@ -91,16 +91,14 @@ func TestDepartStopsDelivery(t *testing.T) {
 	bus, cleanup := newTestBus[string](t)
 	defer cleanup()
 
-	var count int
-	var mu sync.Mutex
 	first := make(chan struct{})
+	extra := make(chan struct{}, 1)
 
 	ticket := bus.Embus("msg", func(v string) {
-		mu.Lock()
-		count++
-		mu.Unlock()
 		select {
 		case <-first:
+			// first message already seen — signal unexpected second delivery
+			extra <- struct{}{}
 		default:
 			close(first)
 		}
@@ -113,11 +111,13 @@ func TestDepartStopsDelivery(t *testing.T) {
 	ticket.Wait()
 
 	bus.Announce("msg", "two")
-	time.Sleep(100 * time.Millisecond)
 
-	mu.Lock()
-	assert.Equal(t, 1, count)
-	mu.Unlock()
+	select {
+	case <-extra:
+		t.Fatal("handler called after Depart")
+	case <-time.After(100 * time.Millisecond):
+		// no second delivery — pass
+	}
 }
 
 func TestDistributedFanout(t *testing.T) {

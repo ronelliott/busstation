@@ -3,7 +3,14 @@ package busstation
 // NewTicket creates a new ticket for the given bus, channel, and event. This is
 // intended for use by custom Bus implementations in external packages that need
 // to construct tickets on behalf of their subscribers.
+// Panics if bus or channel is nil.
 func NewTicket[T any](bus Bus[T], channel chan T, event string) *Ticket[T] {
+	if bus == nil {
+		panic("busstation: NewTicket called with nil bus")
+	}
+	if channel == nil {
+		panic("busstation: NewTicket called with nil channel")
+	}
 	return &Ticket[T]{
 		bus:     bus,
 		channel: channel,
@@ -34,6 +41,12 @@ func (ticket *Ticket[T]) MarkDeparted() bool {
 func (ticket *Ticket[T]) RunHandler(handler Passenger[T]) {
 	if ticket == nil {
 		return
+	}
+	if ticket.channel == nil {
+		panic("busstation: RunHandler called on ticket with nil channel")
+	}
+	if handler == nil {
+		panic("busstation: RunHandler called with nil handler")
 	}
 	ticket.wait.Add(1)
 	go func() {
