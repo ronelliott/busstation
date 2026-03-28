@@ -37,6 +37,8 @@ type redisBusImpl[T any] struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	mu            sync.Mutex
+	closed        bool
+	inflight      sync.WaitGroup
 	subscriptions map[*busstation.Ticket[T]]*subscription[T]
 }
 
@@ -72,7 +74,17 @@ func (b *redisBusImpl[T]) Announce(event string, data T) bool {
 }
 
 func (b *redisBusImpl[T]) Close() error {
+	// Mark the bus as closed so new Embus calls return nil immediately.
+	b.mu.Lock()
+	b.closed = true
+	b.mu.Unlock()
+
+	// Cancel the context so any in-flight pubsub.Receive calls fail fast.
 	b.cancel()
+
+	// Wait for all in-flight Embus calls to finish so their subscriptions are
+	// either fully inserted into b.subscriptions or self-cleaned.
+	b.inflight.Wait()
 
 	b.mu.Lock()
 	old := b.subscriptions
@@ -117,6 +129,18 @@ func (b *redisBusImpl[T]) Depart(ticket *busstation.Ticket[T]) bool {
 // unreachable or the bus has been closed); the error is forwarded to the
 // WithErrorHandler callback if one is set.
 func (b *redisBusImpl[T]) Embus(event string, handler busstation.Passenger[T]) *busstation.Ticket[T] {
+	// Register as in-flight only if the bus has not been closed; this prevents
+	// a Close() → inflight.Wait() from returning before we've either inserted
+	// our subscription or cleaned it up ourselves.
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return nil
+	}
+	b.inflight.Add(1)
+	b.mu.Unlock()
+	defer b.inflight.Done()
+
 	pubsub := b.client.Subscribe(b.ctx, event)
 
 	// Block until Redis acknowledges the subscription so that an Announce
@@ -134,6 +158,14 @@ func (b *redisBusImpl[T]) Embus(event string, handler busstation.Passenger[T]) *
 	ticket.RunHandler(handler)
 
 	b.mu.Lock()
+	if b.closed {
+		// Bus was closed while we were setting up; clean up and bail out so
+		// Close() doesn't miss this subscription.
+		b.mu.Unlock()
+		ticket.MarkDeparted()
+		sub.close()
+		return nil
+	}
 	b.subscriptions[ticket] = sub
 	b.mu.Unlock()
 
