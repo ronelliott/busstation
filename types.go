@@ -39,7 +39,14 @@ type Bus[T any] interface {
 	// Announce sends the given value to all handlers for the given event. The value
 	// is sent to the subscribers in a separate goroutine via a fanout channel. It
 	// returns true if there are subscribers for the given event, false otherwise.
+	// Note: implementations backed by an external broker (e.g. Redis) may return
+	// true based on publish success rather than local subscriber count.
 	Announce(string, T) bool
+
+	// Close releases any resources held by the bus. For the default in-process
+	// implementation this is a no-op. Implementations backed by external brokers
+	// (e.g. Redis) should close their connections here.
+	Close() error
 
 	// Depart removes the ticket from the bus, preventing further calls to the handler.
 	// It returns true if the ticket was removed, false otherwise.
