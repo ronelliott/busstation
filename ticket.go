@@ -12,10 +12,18 @@ func newTicket[T any](bus Bus[T], channel chan T, event string) *Ticket[T] {
 }
 
 // Depart removes the ticket from the bus it was created from, preventing further
-// calls to the handler. It returns true if the ticket was removed successfully,
-// or false otherwise.
+// messages from being delivered to the handler. It returns true if the ticket
+// was removed successfully, or false otherwise. Call Wait after Depart if you
+// need a synchronous guarantee that the handler goroutine has fully exited.
 func (ticket *Ticket[T]) Depart() bool {
 	return ticket.bus.Depart(ticket)
+}
+
+// Wait blocks until the handler goroutine for this ticket has fully exited.
+// It is safe to call from any goroutine, including concurrently with Depart,
+// but must not be called from within the handler itself.
+func (ticket *Ticket[T]) Wait() {
+	ticket.wait.Wait()
 }
 
 // IsValid returns true if the ticket is valid, false otherwise. Tickets are considered

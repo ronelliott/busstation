@@ -3,6 +3,7 @@ package busstation_test
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -42,8 +43,10 @@ func TestBus_Basic(t *testing.T) {
 	assert.True(t, bus.Announce("test1", testValue1), "Announce should return true when there are subscribers")
 	assert.True(t, bus.Announce("test1", testValue1), "Announce should return true when there are subscribers")
 	assert.True(t, bus.Depart(ticket2), "Depart should return true when the ticket is valid")
+	ticket2.Wait()
 	assert.True(t, bus.Announce("test1", testValue1), "Announce should return true when there are subscribers")
 	assert.True(t, bus.Depart(ticket1), "Depart should return true when the ticket is valid")
+	ticket1.Wait()
 	assert.False(t, bus.Announce("test1", testValue1), "Announce should return false when there are no subscribers")
 
 	assert.True(t, bus.Announce("test2", testValue2), "Announce should return true when there are subscribers")
@@ -51,6 +54,7 @@ func TestBus_Basic(t *testing.T) {
 	assert.True(t, bus.Announce("test2", testValue2), "Announce should return true when there are subscribers")
 	assert.True(t, bus.Announce("test2", testValue2), "Announce should return true when there are subscribers")
 	assert.True(t, bus.Depart(ticket3), "Depart should return true when the ticket is valid")
+	ticket3.Wait()
 	assert.False(t, bus.Announce("test2", testValue2), "Announce should return false when there are no subscribers")
 
 	assert.Equal(t, 3, handler1CallCount, "handler1 should be called 3 times")
@@ -96,7 +100,11 @@ func TestBus_Announce_Reentrant(t *testing.T) {
 	})
 
 	assert.True(t, bus.Announce("outer", 1))
-	<-innerCalled
+	select {
+	case <-innerCalled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for re-entrant Announce to deliver")
+	}
 	outerTicket.Depart()
 	innerTicket.Depart()
 }
@@ -117,6 +125,30 @@ func TestBus_ConcurrentAnnounceDepart(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// TestBus_SelfDepart verifies that a handler can call Depart on its own ticket
+// without deadlocking. The ticket is passed through a channel to avoid a data
+// race between the main goroutine's assignment and the handler goroutine's read.
+func TestBus_SelfDepart(t *testing.T) {
+	bus := busstation.NewBus[int]()
+
+	departed := make(chan struct{})
+	ticketC := make(chan *busstation.Ticket[int], 1)
+
+	ticket := bus.Embus("event", func(int) {
+		(<-ticketC).Depart()
+		close(departed)
+	})
+	ticketC <- ticket
+
+	bus.Announce("event", 1)
+	select {
+	case <-departed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for self-depart")
+	}
+	ticket.Wait()
 }
 
 func TestBus_Depart_Invalid(t *testing.T) {

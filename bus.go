@@ -31,12 +31,16 @@ func (bus *busImpl[T]) Announce(event string, data T) bool {
 	return true
 }
 
-// Depart removes the ticket from the bus, preventing further calls to the handler.
-// It returns true if the ticket was removed, false otherwise.
+// Depart removes the ticket from the bus, preventing further messages from
+// being delivered to the handler. It returns true if the ticket was removed,
+// false otherwise. Depart returns as soon as the subscription is torn down;
+// call ticket.Wait() if you also need to block until the handler goroutine
+// has fully exited. This split allows handlers to depart their own ticket
+// without deadlocking.
 func (bus *busImpl[T]) Depart(ticket *Ticket[T]) bool {
 	bus.mutex.Lock()
 
-	if ticket == nil || !ticket.IsValid() || ticket.bus != bus {
+	if ticket == nil || !ticket.IsValid() || ticket.bus != bus || ticket.departing {
 		bus.mutex.Unlock()
 		return false
 	}
@@ -48,16 +52,18 @@ func (bus *busImpl[T]) Depart(ticket *Ticket[T]) bool {
 	}
 
 	event := ticket.event
-	fanout.Close(ticket.channel)
-	ticket.invalidate()
+	ticket.departing = true
 	bus.mutex.Unlock()
 
-	ticket.wait.Wait()
+	// Close runs outside the lock — it may block briefly waiting for any
+	// in-flight send goroutines to finish.
+	fanout.Close(ticket.channel)
 
 	bus.mutex.Lock()
 	if fanout.Len() == 0 {
 		delete(bus.fanouts, event)
 	}
+	ticket.invalidate()
 	bus.mutex.Unlock()
 
 	return true

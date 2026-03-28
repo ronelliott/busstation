@@ -56,8 +56,9 @@ type Passenger[T any] func(T)
 // Ticket is a handle to a passenger registered with a bus. It can be used to
 // remove the passenger from the bus it was created from.
 type Ticket[T any] struct {
-	bus     Bus[T]
-	channel chan T
-	event   string
-	wait    sync.WaitGroup
+	bus        Bus[T]
+	channel    chan T
+	event      string
+	departing  bool
+	wait       sync.WaitGroup
 }
