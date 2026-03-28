@@ -36,11 +36,12 @@ type channelFanout[T any] interface {
 // value is sent to the bus for an event, the handlers registered for that event
 // are called with the value.
 type Bus[T any] interface {
-	// Announce sends the given value to all handlers for the given event. The value
-	// is sent to the subscribers in a separate goroutine via a fanout channel. It
-	// returns true if there are subscribers for the given event, false otherwise.
-	// Note: implementations backed by an external broker (e.g. Redis) may return
-	// true based on publish success rather than local subscriber count.
+	// Announce sends the given value to all handlers for the given event. Delivery
+	// to subscribers may be synchronous or asynchronous and may involve local
+	// fanout or an external message broker, depending on the implementation. It
+	// returns true if the implementation accepts the value for delivery (for
+	// example, there are local subscribers or a publish to the broker succeeds),
+	// false otherwise.
 	Announce(string, T) bool
 
 	// Close releases any resources held by the bus. For the default in-process

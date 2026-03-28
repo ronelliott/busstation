@@ -22,8 +22,9 @@ func WithCodec[T any](c Codec[T]) Option[T] {
 	}
 }
 
-// WithErrorHandler sets a callback for errors that occur during message
-// deserialization. By default, malformed messages are silently dropped.
+// WithErrorHandler sets a callback for errors that occur during subscription
+// setup (e.g. Redis connectivity failures) or message (de)serialization.
+// By default, such errors are silently dropped.
 func WithErrorHandler[T any](fn func(error)) Option[T] {
 	return func(b *redisBusImpl[T]) {
 		b.onErr = fn
@@ -68,6 +69,9 @@ func NewBus[T any](addr string, opts ...Option[T]) busstation.Bus[T] {
 func (b *redisBusImpl[T]) Announce(event string, data T) bool {
 	payload, err := b.codec.Marshal(data)
 	if err != nil {
+		if b.onErr != nil {
+			b.onErr(err)
+		}
 		return false
 	}
 	return b.client.Publish(b.ctx, event, payload).Err() == nil
