@@ -1,6 +1,9 @@
 package busstation
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // channelFanout is a fanout strategy that sends values to a set of channels.
 // It is used by the bus to send values to all handlers for a given event.
@@ -56,9 +59,9 @@ type Passenger[T any] func(T)
 // Ticket is a handle to a passenger registered with a bus. It can be used to
 // remove the passenger from the bus it was created from.
 type Ticket[T any] struct {
-	bus        Bus[T]
-	channel    chan T
-	event      string
-	departing  bool
-	wait       sync.WaitGroup
+	bus      Bus[T]
+	channel  chan T
+	event    string
+	departed atomic.Bool
+	wait     sync.WaitGroup
 }

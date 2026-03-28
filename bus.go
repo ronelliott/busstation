@@ -17,7 +17,9 @@ func NewBus[T any]() Bus[T] {
 
 // Announce sends the given value to all handlers for the given event. The value
 // is sent to the subscribers in a separate goroutine via a fanout channel. It
-// returns true if there are subscribers for the given event, false otherwise.
+// returns true if there were subscribers registered at the moment the check was
+// made, false otherwise. Under concurrent use a subscriber may depart after
+// this check but before delivery completes, so a true return is best-effort.
 func (bus *busImpl[T]) Announce(event string, data T) bool {
 	bus.mutex.Lock()
 	fanout, ok := bus.fanouts[event]
@@ -38,10 +40,14 @@ func (bus *busImpl[T]) Announce(event string, data T) bool {
 // has fully exited. This split allows handlers to depart their own ticket
 // without deadlocking.
 func (bus *busImpl[T]) Depart(ticket *Ticket[T]) bool {
-	bus.mutex.Lock()
+	if ticket == nil || !ticket.departed.CompareAndSwap(false, true) {
+		return false
+	}
 
-	if ticket == nil || !ticket.IsValid() || ticket.bus != bus || ticket.departing {
+	bus.mutex.Lock()
+	if ticket.bus != bus {
 		bus.mutex.Unlock()
+		ticket.departed.Store(false) // undo — ticket belongs to another bus
 		return false
 	}
 
@@ -52,7 +58,6 @@ func (bus *busImpl[T]) Depart(ticket *Ticket[T]) bool {
 	}
 
 	event := ticket.event
-	ticket.departing = true
 	bus.mutex.Unlock()
 
 	// Close runs outside the lock — it may block briefly waiting for any
@@ -63,7 +68,6 @@ func (bus *busImpl[T]) Depart(ticket *Ticket[T]) bool {
 	if fanout.Len() == 0 {
 		delete(bus.fanouts, event)
 	}
-	ticket.invalidate()
 	bus.mutex.Unlock()
 
 	return true
