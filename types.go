@@ -59,6 +59,5 @@ type Ticket[T any] struct {
 	bus     Bus[T]
 	channel chan T
 	event   string
-	invalid bool
 	wait    sync.WaitGroup
 }

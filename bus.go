@@ -20,9 +20,9 @@ func NewBus[T any]() Bus[T] {
 // returns true if there are subscribers for the given event, false otherwise.
 func (bus *busImpl[T]) Announce(event string, data T) bool {
 	bus.mutex.Lock()
-	defer bus.mutex.Unlock()
-
 	fanout, ok := bus.fanouts[event]
+	bus.mutex.Unlock()
+
 	if !ok {
 		return false
 	}
@@ -35,25 +35,30 @@ func (bus *busImpl[T]) Announce(event string, data T) bool {
 // It returns true if the ticket was removed, false otherwise.
 func (bus *busImpl[T]) Depart(ticket *Ticket[T]) bool {
 	bus.mutex.Lock()
-	defer bus.mutex.Unlock()
 
 	if ticket == nil || !ticket.IsValid() {
+		bus.mutex.Unlock()
 		return false
 	}
 
 	fanout, ok := bus.fanouts[ticket.event]
 	if !ok {
+		bus.mutex.Unlock()
 		return false
 	}
 
 	fanout.Close(ticket.channel)
+	bus.mutex.Unlock()
+
 	ticket.wait.Wait()
 
+	bus.mutex.Lock()
 	if fanout.Len() == 0 {
 		delete(bus.fanouts, ticket.event)
 	}
-
 	ticket.invalidate()
+	bus.mutex.Unlock()
+
 	return true
 }
 
