@@ -33,6 +33,7 @@ func TestAnnounceAndReceive(t *testing.T) {
 		mu.Unlock()
 		close(done)
 	})
+	require.NotNil(t, ticket)
 	defer ticket.Depart()
 
 	ok := bus.Announce("greet", "hello")
@@ -65,6 +66,7 @@ func TestMultipleSubscribers(t *testing.T) {
 			received[i] = v
 			wg.Done()
 		})
+		require.NotNil(t, tickets[i])
 	}
 	defer func() {
 		for _, t := range tickets {
@@ -103,6 +105,7 @@ func TestDepartStopsDelivery(t *testing.T) {
 			close(first)
 		}
 	})
+	require.NotNil(t, ticket)
 
 	bus.Announce("msg", "one")
 	select {
@@ -134,6 +137,7 @@ func TestDistributedFanout(t *testing.T) {
 
 	done := make(chan string, 1)
 	ticket := busB.Embus("ping", func(v string) { done <- v })
+	require.NotNil(t, ticket)
 	defer ticket.Depart()
 
 	busA.Announce("ping", "cross-process")
@@ -169,6 +173,7 @@ func TestErrorHandler(t *testing.T) {
 	defer intBus.Close()
 
 	ticket := intBus.Embus("bad", func(int) {})
+	require.NotNil(t, ticket)
 	defer ticket.Depart()
 
 	// Publish a JSON object from a Bus[struct] on the same server — int bus
