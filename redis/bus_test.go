@@ -196,3 +196,50 @@ func TestErrorHandler(t *testing.T) {
 	assert.Error(t, errSeen)
 	mu.Unlock()
 }
+
+func TestEmbusAfterClose_ReturnsNil(t *testing.T) {
+	bus, cleanup := newTestBus[string](t)
+	cleanup() // close the bus immediately
+
+	ticket := bus.Embus("evt", func(string) {})
+	assert.Nil(t, ticket, "Embus after Close should return nil")
+}
+
+func TestEmbusOnSubscribeFailure(t *testing.T) {
+	var errSeen error
+	var mu sync.Mutex
+	errDone := make(chan struct{})
+
+	mr := miniredis.RunT(t)
+	addr := mr.Addr()
+
+	bus := busredis.NewBus[string](addr,
+		busredis.WithErrorHandler[string](func(err error) {
+			mu.Lock()
+			errSeen = err
+			mu.Unlock()
+			select {
+			case <-errDone:
+			default:
+				close(errDone)
+			}
+		}),
+	)
+	defer bus.Close()
+
+	// Shut down miniredis so the next subscribe fails.
+	mr.Close()
+
+	ticket := bus.Embus("evt", func(string) {})
+	assert.Nil(t, ticket, "Embus should return nil when Redis is unreachable")
+
+	select {
+	case <-errDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for error handler")
+	}
+
+	mu.Lock()
+	assert.Error(t, errSeen)
+	mu.Unlock()
+}
