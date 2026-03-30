@@ -36,10 +36,18 @@ type channelFanout[T any] interface {
 // value is sent to the bus for an event, the handlers registered for that event
 // are called with the value.
 type Bus[T any] interface {
-	// Announce sends the given value to all handlers for the given event. The value
-	// is sent to the subscribers in a separate goroutine via a fanout channel. It
-	// returns true if there are subscribers for the given event, false otherwise.
+	// Announce sends the given value to all handlers for the given event. Delivery
+	// to subscribers may be synchronous or asynchronous and may involve local
+	// fanout or an external message broker, depending on the implementation. It
+	// returns true if the implementation accepts the value for delivery (for
+	// example, there are local subscribers or a publish to the broker succeeds),
+	// false otherwise.
 	Announce(string, T) bool
+
+	// Close releases any resources held by the bus. For the default in-process
+	// implementation this is a no-op. Implementations backed by external brokers
+	// (e.g. Redis) should close their connections here.
+	Close() error
 
 	// Depart removes the ticket from the bus, preventing further calls to the handler.
 	// It returns true if the ticket was removed, false otherwise.
@@ -48,7 +56,10 @@ type Bus[T any] interface {
 	// Embus adds the given handler to the bus for the given event. The handler will
 	// be called for each value sent to the bus for the given event. The handler
 	// will be called in a separate goroutine via a fanout channel. The ticket
-	// returned can be used to remove the handler from the bus.
+	// returned can be used to remove the handler from the bus. Implementations
+	// backed by an external broker (e.g. Redis) may return nil if the subscription
+	// cannot be established (e.g. the broker is unreachable or the bus is closed);
+	// callers should check for a nil ticket before using it.
 	Embus(string, Passenger[T]) *Ticket[T]
 }
 

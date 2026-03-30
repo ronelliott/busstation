@@ -73,6 +73,12 @@ func (bus *busImpl[T]) Depart(ticket *Ticket[T]) bool {
 	return true
 }
 
+// Close is a no-op for the in-process bus. It exists to satisfy the Bus interface,
+// which allows external-broker implementations to release their connections.
+func (bus *busImpl[T]) Close() error {
+	return nil
+}
+
 // Embus adds the given handler to the bus for the given event. The handler will
 // be called for each value sent to the bus for the given event. The handler
 // will be called in a separate goroutine via a fanout channel. The ticket

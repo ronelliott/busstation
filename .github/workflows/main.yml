@@ -16,6 +16,9 @@ jobs:
           go-version: '^1.24'
       - name: Run tests
         run: go test -v -race -covermode atomic -coverprofile=covprofile ./...
+      - name: Run redis submodule tests
+        run: go test -v -race ./...
+        working-directory: redis
       - name: Install goveralls
         run: go install github.com/mattn/goveralls@latest
       - name: Send coverage to Coveralls
