@@ -59,18 +59,21 @@ func TestMultipleSubscribers(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(n)
 
-	tickets := make([]interface{ Depart() bool }, n)
+	tickets := make([]*busstation.Ticket[int], n)
 	for i := 0; i < n; i++ {
 		i := i
-		tickets[i] = bus.Embus("count", func(v int) {
+		ticket := bus.Embus("count", func(v int) {
 			received[i] = v
 			wg.Done()
 		})
-		require.NotNil(t, tickets[i])
+		require.NotNil(t, ticket)
+		tickets[i] = ticket
 	}
 	defer func() {
-		for _, t := range tickets {
-			t.Depart()
+		for _, ticket := range tickets {
+			if ticket != nil {
+				ticket.Depart()
+			}
 		}
 	}()
 
