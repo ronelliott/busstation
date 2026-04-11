@@ -1,5 +1,20 @@
 package busstation
 
+import (
+	"sync"
+	"sync/atomic"
+)
+
+// Ticket is a handle to a passenger registered with a bus. It can be used to
+// remove the passenger from the bus it was created from.
+type Ticket[T any] struct {
+	bus      Bus[T]
+	channel  chan T
+	departed atomic.Bool
+	event    string
+	wait     sync.WaitGroup
+}
+
 // NewTicket creates a new ticket for the given bus, channel, and event. This is
 // intended for use by custom Bus implementations in external packages that need
 // to construct tickets on behalf of their subscribers.

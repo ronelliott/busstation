@@ -2,6 +2,33 @@ package busstation
 
 import "sync"
 
+// channelFanout is a fanout strategy that sends values to a set of channels.
+// It is used by the bus to send values to all handlers for a given event.
+// This interface is used to decouple the bus from the fanout implementation and
+// allows for different fanout strategies to be used.
+// This is internal to the package and should not be used outside of it.
+type channelFanout[T any] interface {
+	// Add adds the given channels to the fanout.
+	Add(...chan<- T)
+
+	// Close is a convenience method that removes the given channels from the fanout
+	// and then closes it.
+	Close(...chan<- T)
+
+	// Create creates a new channel and adds it to the fanout. The new channel is
+	// returned.
+	Create() chan T
+
+	// Len returns the number of channels in the fanout.
+	Len() int
+
+	// Remove removes the given channels from the fanout.
+	Remove(...chan<- T)
+
+	// Send sends each of the given values to all channels in the fanout.
+	Send(...T)
+}
+
 // fanoutEntry holds a subscriber channel alongside the coordination state
 // needed to safely close it while sends may be in flight.
 //
@@ -56,7 +83,7 @@ func (fanout *channelFanoutImpl[T]) Close(channels ...chan<- T) {
 	fanout.mu.Unlock()
 
 	for _, e := range toClose {
-		close(e.done)      // unblock any select goroutine waiting on this entry
+		close(e.done)     // unblock any select goroutine waiting on this entry
 		e.inflight.Wait() // wait for all in-flight sends to exit
 		close(e.ch)       // safe: no goroutine is sending to ch
 	}
